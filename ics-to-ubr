@@ -1,0 +1,159 @@
+#!/usr/bin/perl
+
+# vcalendar-filter is a simple filter to give plain text representations of vcards
+# Copyright (C) 2008  Martyn Smith
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This script takes a simple VCALENDAR file as input on STDIN and produces a
+# human readable text/plain representation of it on STDOUT
+#
+# It has been designed for use with mutt's auto_view config option, see the
+# README file for more details
+
+use strict;
+use warnings;
+
+use Data::ICal;
+use Text::Autoformat;
+use Date::Manip::DM6;
+use Date::Manip::TZ;
+use Date::Manip::Date;
+
+my $body = eval { local $/ = undef; <> };
+my $calendar = Data::ICal->new(data => $body);
+
+# If parsing failed, try parsing as version 1.0
+$calendar = Data::ICal->new(data => $body, vcal10 => 1) unless $calendar;
+
+# If parsing failed, give up :-(
+unless ( $calendar ) {
+    print "Unable to parse vcalendar: ", $calendar->error_message, "\n";
+    print $body;
+    exit 1;
+}
+
+my @events;
+
+my $vevent = 0;
+foreach my $entry ( @{$calendar->{entries}} ) {
+    my $properties;
+
+    foreach my $property ( keys %{$entry->properties} ) {
+        next unless defined $entry->property($property);
+        $properties->{$property} = join(', ', map { $_->decoded_value } @{$entry->property($property)});
+        if ( $property eq 'description' ) {
+            #$properties->{$property} = eval qq{"$properties->{$property}"};
+	    #printf "Description: %s\n", $properties->{$property};
+
+            $properties->{$property} = autoformat $properties->{$property}, {
+                all => 1,
+                left => 15,
+            };
+            $properties->{$property} =~ s/^\s*// if defined $properties->{$property};
+        } elsif ( $property =~ m{ \A dt (?: start | end ) \z }xms ) {
+            if ( $properties->{$property} =~ m{ (\d\d\d\d)(\d\d)(\d\d)T(\d\d)(\d\d)(\d\d) }xms ) {
+                $properties->{$property} = "$1-$2-$3 $4:$5:$6";
+            }
+	}
+    }
+
+    my $gtz;
+
+    if ( $entry->ical_entry_type eq 'VEVENT' ) {
+    	my $event = { };
+	$event->{count} = $vevent++;
+	my $prevseen = 0;
+        foreach my $key ( qw(summary dtstart dtend) ) {
+	    $prevseen = 0;
+            next unless defined $properties->{$key};
+	    my $info = $properties->{$key};
+	    $info =~ s/mailto://gi;
+	    $info =~ s/\s*$//;
+	    next unless length($info) > 0;
+	    $prevseen = 1;
+	    my $timeentry = 0;
+	    my $k = $key;
+	    if ($key eq 'dtstart') {
+		$k = "starts";
+		$timeentry = 1;
+	    } elsif ($key eq 'dtend') {
+		$k = "ends";
+		$timeentry = 1;
+	    }
+	    if ($timeentry > 0) {
+		my ($loctz,$tz);
+		# check if ';TZID=<timezone>' was specified as a parameter
+		foreach my $param ( @{$entry->property($key)} ) {
+			foreach my $parm (keys %{$param->parameters} ) {
+				if ($parm eq "TZID") {
+					$tz = ${$param->parameters}{$parm};
+				}
+			}
+		}
+		# Default to 'GMT' if not specified anywhere else
+		if (!defined($tz)) {
+			if (!defined($gtz)) {
+				if (!defined($properties->{tzid})) {
+					$tz = "GMT";
+				} else {
+					$tz = $properties->{tzid};
+				}
+			} else {
+				$tz = $gtz;
+			}
+		}
+		my $tzobj = new Date::Manip::TZ;
+		#$loctz = Date_TimeZone;
+		$loctz = $tzobj->curr_zone();
+		#my $offset = $tzobj->{offset};
+		$info = Date_ConvTZ( $info, $tz, $loctz );
+	    }
+	    if (defined($info)) {
+		$event->{$k} = $info;
+	    }
+        }
+	push @events, $event;
+    } elsif ( $entry->ical_entry_type eq 'VTIMEZONE') {
+	if (defined($properties->{tzid})) {
+		$gtz = $properties->{tzid};
+	}
+    } else {
+        print "WARNING: Unknown entry type: ", $entry->ical_entry_type, "\n";
+    }
+}
+
+my $now = ParseDate("now");
+my $nows = UnixDate($now, "%s");
+foreach my $event (sort { $a->{starts}->cmp($b->{starts}) } @events) {
+	foreach my $w ((45,15,5)) {
+		if (!defined($event->{starts})) {
+			printf STDERR "Event '%s' starts is undef\n", $event->{summary};
+			exit(1);
+		}
+		my $warn = $event->{starts}->calc($now, "- $w minutes" );
+		printf STDERR "warn = '%s' an is a %s\n", $warn, ref($warn);
+		my $warns = UnixDate( $warn, "%s");
+		if (!defined($warns)) {
+			print STDERR "warns undef!\n";
+			exit(1);
+		}
+		printf "hey b remind \@everyone in %d seconds to note: %s Takeover Event in %d minutes\n",
+			$warn, $event->{summary}, $w;
+	}
+	my $warns = UnixDate($event->{starts}, "%s");
+	my $ttl = $warns - $nows;
+	printf "hey b remind \@everyone in %d seconds to note: %s Takeover Event NOW\n",
+		$ttl, $event->{summary};
+}
