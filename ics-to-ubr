@@ -25,6 +25,7 @@
 use strict;
 use warnings;
 
+use Data::Dumper;
 use Data::ICal;
 use Text::Autoformat;
 use Date::Manip::DM6;
@@ -115,12 +116,63 @@ foreach my $entry ( @{$calendar->{entries}} ) {
 			}
 		}
 		my $tzobj = new Date::Manip::TZ;
-		#$loctz = Date_TimeZone;
 		$loctz = $tzobj->curr_zone();
-		#my $offset = $tzobj->{offset};
-		$info = Date_ConvTZ( $info, $tz, $loctz );
+
+		# need Date::Manip::Date back, so had to read Date_ConvTZ() code to do the below:
+
+		my $d = Date::Manip::Date->new();
+		my $dmt = $d->tz();
+		my $err = $d->parse($info);
+		if ($err) {
+			printf STDERR "parse of '%s' resulted in error: '%s'\n", $info, $err;
+			exit(1);
+		}
+
+		my $dval = [ $d->value() ];
+		if (! $dval) {
+			printf STDERR "value of '%s' resulted in undef\n", $info;
+			exit(1);
+		}
+
+		my $tmp;
+		$tmp = $dmt->zone($tz, $dval);
+		if (! $tmp) {
+			$tmp = $dmt->zone($tz);
+			if (! $tmp) {
+				printf STDERR "tz src issue\n";
+				exit(1);
+			}
+		}
+		my $from = $tmp;
+
+		$tmp = $dmt->zone($loctz, $dval);
+		if (! $tmp) {
+			$tmp = $dmt->zone($loctz);
+			if (! $tmp) {
+				printf STDERR "tz dst issue\n";
+				exit(1);
+			}
+		}
+		my $to = $tmp;
+
+		($err, $dval) = $dmt->convert($dval, $from, $to);
+		if ($err) {
+			printf STDERR "dmt->convert() err = '%s'\n", $err;
+			exit(1);
+		}
+		#printf STDERR "dval is a %s, contents:\n", ref($dval);
+		#print STDERR Dumper($dval);
+		#print STDERR "\n";
+		$d->set('date', $dval);
+		#printf STDERR "d is a %s, contents:\n", ref($d);
+		#print STDERR Dumper($d);
+		#print STDERR "\n";
+
+		$info = $d;
+
 	    }
 	    if (defined($info)) {
+		#printf STDERR "event->{%s} = { %s }\n", $k, ref($info);
 		$event->{$k} = $info;
 	    }
         }
@@ -134,26 +186,32 @@ foreach my $entry ( @{$calendar->{entries}} ) {
     }
 }
 
-my $now = ParseDate("now");
-my $nows = UnixDate($now, "%s");
+my $now = Date::Manip::Date->new();
+$now->parse("now");
+my $nows = $now->secs_since_1970_GMT();
 foreach my $event (sort { $a->{starts}->cmp($b->{starts}) } @events) {
+	my $starts = $event->{starts}->secs_since_1970_GMT();
 	foreach my $w ((45,15,5)) {
 		if (!defined($event->{starts})) {
 			printf STDERR "Event '%s' starts is undef\n", $event->{summary};
 			exit(1);
 		}
-		my $warn = $event->{starts}->calc($now, "- $w minutes" );
-		printf STDERR "warn = '%s' an is a %s\n", $warn, ref($warn);
-		my $warns = UnixDate( $warn, "%s");
+		my $warns = $starts - $nows;
+		$warns -= ($w * 60);
 		if (!defined($warns)) {
 			print STDERR "warns undef!\n";
 			exit(1);
 		}
+		while ($warns < 0) {
+			$warns += 7*24*3600;
+		}
 		printf "hey b remind \@everyone in %d seconds to note: %s Takeover Event in %d minutes\n",
-			$warn, $event->{summary}, $w;
+			$warns, $event->{summary}, $w;
 	}
-	my $warns = UnixDate($event->{starts}, "%s");
-	my $ttl = $warns - $nows;
+	my $warns = $starts - $nows;
+	while ($warns < 0) {
+		$warns += 7*24*3600;
+	}
 	printf "hey b remind \@everyone in %d seconds to note: %s Takeover Event NOW\n",
-		$ttl, $event->{summary};
+		$warns, $event->{summary};
 }
