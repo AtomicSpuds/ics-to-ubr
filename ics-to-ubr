@@ -191,22 +191,37 @@ $now->parse("now");
 my $nows = $now->secs_since_1970_GMT();
 foreach my $event (sort { $a->{starts}->cmp($b->{starts}) } @events) {
 	my $starts = $event->{starts}->secs_since_1970_GMT();
-	foreach my $w ((45,15,5)) {
+	foreach my $w ((1440,720,360,45,15,5)) {
+		my $m = $w;
 		if (!defined($event->{starts})) {
 			printf STDERR "Event '%s' starts is undef\n", $event->{summary};
 			exit(1);
 		}
 		my $warns = $starts - $nows;
-		$warns -= ($w * 60);
+		$warns -= ($m * 60);
 		if (!defined($warns)) {
 			print STDERR "warns undef!\n";
 			exit(1);
 		}
+		# adjust for future event if its in thee past
 		while ($warns < 0) {
 			$warns += 7*24*3600;
 		}
-		printf "hey b remind \@everyone in %d seconds to note: %s Takeover Event in %d minutes\n",
-			$warns, $event->{summary}, $w;
+		my $timestr = "";
+		my $h = 0;
+		while ($m >= 60) {
+			$h++;
+			$m = $m - 60;
+		}
+		if ($h > 0) {
+			$timestr .= "$h hours ";
+		}
+		if ($m > 0) {
+			$timestr .= "$m minutes";
+		}
+			
+		printf "hey b remind \@everyone in %d seconds to note: %s Takeover Event in %s\n",
+			$warns, $event->{summary}, $timestr;
 	}
 	my $warns = $starts - $nows;
 	while ($warns < 0) {
