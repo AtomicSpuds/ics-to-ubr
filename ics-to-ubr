@@ -191,7 +191,7 @@ $now->parse("now");
 my $nows = $now->secs_since_1970_GMT();
 foreach my $event (sort { $a->{starts}->cmp($b->{starts}) } @events) {
 	my $starts = $event->{starts}->secs_since_1970_GMT();
-	foreach my $w ((1440,720,360,45,15,5)) {
+	foreach my $w ((2160,1440,720,360,45,15,5)) {
 		my $m = $w;
 		if (!defined($event->{starts})) {
 			printf STDERR "Event '%s' starts is undef\n", $event->{summary};
