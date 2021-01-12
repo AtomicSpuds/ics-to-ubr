@@ -191,7 +191,12 @@ $now->parse("now");
 my $nows = $now->secs_since_1970_GMT();
 foreach my $event (sort { $a->{starts}->cmp($b->{starts}) } @events) {
 	my $starts = $event->{starts}->secs_since_1970_GMT();
-	foreach my $w ((2160,1440,720,360,45,15,5)) {
+
+	# XXX calculate
+	my $dow = "Monday";
+	my $hour = "6pm";
+
+	foreach my $w ((2880,1440,120,60,45,30,10)) {
 		my $m = $w;
 		if (!defined($event->{starts})) {
 			printf STDERR "Event '%s' starts is undef\n", $event->{summary};
@@ -219,14 +224,15 @@ foreach my $event (sort { $a->{starts}->cmp($b->{starts}) } @events) {
 		if ($m > 0) {
 			$timestr .= "$m minutes";
 		}
-			
-		printf "hey b remind \@everyone in %d seconds to note: %s Takeover Event in %s\n",
-			$warns, $event->{summary}, $timestr;
+		my $str = sprintf "hey b remind \@everyone in %d seconds to takeover in %s on %s at %s (%s)\n",
+			$warns, $timestr, $dow, $hour, $event->{summary};
+		$str =~ s/\s+/ /g;
+		print $str."\n";
 	}
 	my $warns = $starts - $nows;
 	while ($warns < 0) {
 		$warns += 7*24*3600;
 	}
-	printf "hey b remind \@everyone in %d seconds to note: %s Takeover Event NOW\n",
-		$warns, $event->{summary};
+	printf "hey b remind \@everyone in %d seconds to takeover NOW on %s at %s (%s)\n",
+		$warns, $dow, $hour, $event->{summary};
 }
