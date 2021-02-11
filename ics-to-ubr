@@ -23,6 +23,21 @@ use Text::Autoformat;
 use Date::Manip::DM6;
 use Date::Manip::TZ;
 use Date::Manip::Date;
+use Getopt::Std;
+
+our $opt_a; # if defined, at output vs ub3r
+our $opt_d; # if defined, day of week to match
+our $opt_w; # webhook
+our $opt_n; # do all but spawn the at jobs
+
+getopts('ad:nw:');
+
+if (!defined($opt_w)) {
+	die "Need -w <webhook url>";
+	exit(1);
+}
+
+my $wh = $opt_w;
 
 my $body = eval { local $/ = undef; <> };
 my $calendar = Data::ICal->new(data => $body);
@@ -185,24 +200,41 @@ foreach my $event (sort { $a->{starts}->cmp($b->{starts}) } @events) {
 	my $starts = $event->{starts}->secs_since_1970_GMT();
 
 	my ($pdt,$mdt,$cdt,$edt);
-	my ($h,$ampm,$dow) = $event->{starts}->printf("%i","%p","%A");
+	my ($h,$ampm,$dow) = $event->{starts}->printf("%k","%p","%A");
+	if (defined($opt_d)) {
+		if ($opt_d ne $dow) {
+			next;
+		}
+	}
 	$h =~ s/^\s+//;
 	$ampm = lc($ampm);
 	my $pacific = $h - 2;
 	if ($pacific < 12) {
 		$pdt = "${pacific}am";
 	} else {
+		if ($pacific > 12) {
+			$pacific = $pacific - 12;
+		}
 		$pdt = "${pacific}pm";
 	}
 	my $mountain = $h - 1;
 	if ($mountain < 12) {
 		$mdt = "${mountain}am";
 	} else {
+		if ($mountain > 12) {
+			$pacific = $pacific - 12;
+		}
 		$mdt = "${mountain}pm";
 	}
 	my $central = $h;
+	if ($central > 12) {
+		$central = $central - 12;
+	}
 	$cdt = ${central}.$ampm;
 	my $eastern = $h + 1;
+	if ($eastern > 12) {
+		$eastern = $eastern - 12;
+	}
 	$edt = ${eastern}.$ampm;
 	# always afternoon
 	my $hour = "$pdt/$mdt/$cdt/$edt PDT/MDT/CDT/EDT";
@@ -235,15 +267,45 @@ foreach my $event (sort { $a->{starts}->cmp($b->{starts}) } @events) {
 		if ($m > 0) {
 			$timestr .= "$m minutes";
 		}
-		my $str = sprintf "hey b remind \@everyone in %d seconds to takeover in %s on %s at %s (%s)\n",
+		my $str;
+		if (defined($opt_a)) {
+			my $atime = $event->{starts}->printf("%Y%m%d%H%M.%S");
+			printf STDERR "at -t $atime\n";
+			my $cmd = sprintf "dwebhook %s \"TC Reminder: %s\" ".
+				"\"%s on %s at %s \@everyone\"",
+				$wh, $event->{summary}, $timestr, $dow, $hour;
+			printf STDERR "> %s\n", $cmd;
+			if (!defined($opt_n)) {
+				open(C,"|at -t $atime");
+				printf C "%s\n", $cmd;
+				close(C);
+			}
+			
+		} else {
+			$str = sprintf "hey b remind \@everyone in %d seconds to takeover in %s on %s at %s (%s)\n",
 			$warns, $timestr, $dow, $hour, $event->{summary};
-		$str =~ s/\s+/ /g;
-		print $str."\n";
+			$str =~ s/\s+/ /g;
+			print $str."\n";
+		}
 	}
 	my $warns = $starts - $nows;
 	while ($warns < 0) {
 		$warns += 7*24*3600;
 	}
-	printf "hey b remind \@everyone in %d seconds to takeover NOW on %s at %s (%s)\n",
-		$warns, $dow, $hour, $event->{summary};
+	if (defined($opt_a)) {
+		my $atime = $now->printf("%Y%m%d%H%M.%S");
+		printf STDERR "at -t $atime\n";
+		my $cmd = sprintf "dwebhook %s \"TC Reminder: %s\" ".
+			"\"NOW on %s at %s \@everyone\"",
+			$wh, $event->{summary}, $dow, $hour;
+		printf STDERR "> %s\n", $cmd;
+		if (!defined($opt_n)) {
+			open(C,"|at -t $atime");
+			printf C "%s\n",$cmd;
+			close(C);
+		}
+	} else {
+		printf "hey b remind \@everyone in %d seconds to takeover NOW on %s at %s (%s)\n",
+			$warns, $dow, $hour, $event->{summary};
+	}
 }
