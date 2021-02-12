@@ -69,7 +69,7 @@ if (!defined($opt_w) && defined($opt_a)) {
 	exit(1);
 }
 
-my $wh = $opt_w;
+our $wh = $opt_w;
 
 my $body = eval { local $/ = undef; <> };
 my $calendar = Data::ICal->new(data => $body);
@@ -229,7 +229,7 @@ my $now = Date::Manip::Date->new();
 $now->parse("now");
 my $nows = $now->secs_since_1970_GMT();
 
-my $warntime = Date::Manip::Date->new();
+our $warntime = Date::Manip::Date->new();
 
 foreach my $event (sort { $a->{starts}->cmp($b->{starts}) } @events) {
 	my $starts = $event->{starts}->secs_since_1970_GMT();
@@ -269,8 +269,14 @@ foreach my $event (sort { $a->{starts}->cmp($b->{starts}) } @events) {
 		$eastern = $eastern - 12;
 	}
 	$edt = ${eastern}.$ampm;
+
+	my $b4reset = 10 - $central;
 	# always afternoon
-	my $hour = "$pdt/$mdt/$cdt/$edt PDT/MDT/CDT/EDT";
+	my $hour = "${b4reset}h before reset
+$pdt US/Pacific
+$mdt US/Mountain
+$cdt US/Central
+$edt US/Eastern";
 	my $warnbase = $starts - $nows;
 
 	foreach my $w (@warntimes) {
@@ -291,7 +297,7 @@ foreach my $event (sort { $a->{starts}->cmp($b->{starts}) } @events) {
 		while ($warns < 0) {
 			$warns += 7*24*3600;
 		}
-		my $timestr = "";
+		my $timestr = "in ";
 		my $h = 0;
 		while ($m >= 60) {
 			$h++;
@@ -305,19 +311,9 @@ foreach my $event (sort { $a->{starts}->cmp($b->{starts}) } @events) {
 		}
 		my $str;
 		if (defined($opt_a)) {
-			$warntime->secs_since_1970_GMT($warns+$nows);
-			my $atime = $warntime->printf("%Y%m%d%H%M.%S");
-			printf STDERR "at -t %s # %s in %ds (%s warning)\n", $atime, $event->{summary}, $warns, $timestr;
-			my $cmd = sprintf "dwebhook %s \"TC Reminder: %s\" ".
-				"\"%s on %s at %s \@everyone\"",
-				$wh, $event->{summary}, $timestr, $dow, $hour;
-			printf STDERR "  %s\n", $cmd;
-			if (!defined($opt_n)) {
-				open(C,"|at -t $atime");
-				printf C "%s\n", $cmd;
-				close(C);
-			}
-			
+			my $sum = $warns + $nows;
+			fmt_warning($sum, $event->{summary},
+				$timestr, $warns, $dow, $hour);
 		} else {
 			$str = sprintf "hey b remind \@everyone in %d seconds to takeover in %s on %s at %s (%s)\n",
 			$warns, $timestr, $dow, $hour, $event->{summary};
@@ -330,20 +326,32 @@ foreach my $event (sort { $a->{starts}->cmp($b->{starts}) } @events) {
 		$warns += 7*24*3600;
 	}
 	if (defined($opt_a)) {
-		$warntime->secs_since_1970_GMT($warns+$nows);
-		my $atime = $warntime->printf("%Y%m%d%H%M.%S");
-		printf STDERR "at -t %s # %s in %ds (NOW)\n", $atime, $event->{summary}, $warns;
-		my $cmd = sprintf "dwebhook %s \"TC Reminder: %s\" ".
-			"\"NOW on %s at %s \@everyone\"",
-			$wh, $event->{summary}, $dow, $hour;
-		printf STDERR "> %s\n", $cmd;
-		if (!defined($opt_n)) {
-			open(C,"|at -t $atime");
-			printf C "%s\n",$cmd;
-			close(C);
-		}
+		my $sum = $warns + $nows;
+		fmt_warning($sum, $event->{summary},
+			"NOW", $warns, $dow, $hour);
 	} else {
 		printf "hey b remind \@everyone in %d seconds to takeover NOW on %s at %s (%s)\n",
 			$warns, $dow, $hour, $event->{summary};
 	}
 }
+
+sub fmt_warning {
+	my ($secs, $summary, $timestr, $warns, $dow, $hour) = @_;
+
+	$warntime->secs_since_1970_GMT($secs);
+	my $atime = $warntime->printf("%Y%m%d%H%M.%S");
+	printf STDERR "at -t %s # %s in %ds (%s warning)\n",
+		$atime, $summary, $warns, $timestr;
+	my $cmd = sprintf "dwebhook %s \"TC Reminder: %s\" ".
+		"\"%s on %s %s
+\@everyone\"",
+		$wh, $summary, $timestr, $dow, $hour;
+	printf STDERR "  %s\n", $cmd;
+	if (!defined($opt_n)) {
+		open(C,"|at -t $atime");
+		printf C "%s\n", $cmd;
+		close(C);
+	}
+}
+
+0;
