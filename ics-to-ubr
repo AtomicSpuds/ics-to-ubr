@@ -17,23 +17,25 @@
 use strict;
 use warnings;
 
+use Config::Tiny;
 use Data::Dumper;
 use Data::ICal;
-use Text::Autoformat;
 use Date::Manip::DM6;
-use Date::Manip::TZ;
 use Date::Manip::Date;
+use Date::Manip::TZ;
 use Getopt::Std;
+use Text::Autoformat;
 
 our $opt_a; # if defined, at output vs ub3r
+our $opt_c; # if defined, override $conf file
 our $opt_d; # if defined, day of week to match
 our $opt_w; # webhook
 our $opt_n; # do all but spawn the at jobs
 
-getopts('ad:nw:');
+getopts('ac:d:nw:');
 
-if (!defined($opt_w)) {
-	die "Need -w <webhook url>";
+if (!defined($opt_w) && defined($opt_a)) {
+	die "Need '-w <webhook url>' to send reminders";
 	exit(1);
 }
 
@@ -196,16 +198,14 @@ foreach my $entry ( @{$calendar->{entries}} ) {
 my $now = Date::Manip::Date->new();
 $now->parse("now");
 my $nows = $now->secs_since_1970_GMT();
+
+my $warntime = Date::Manip::Date->new();
+
 foreach my $event (sort { $a->{starts}->cmp($b->{starts}) } @events) {
 	my $starts = $event->{starts}->secs_since_1970_GMT();
 
 	my ($pdt,$mdt,$cdt,$edt);
 	my ($h,$ampm,$dow) = $event->{starts}->printf("%k","%p","%A");
-	if (defined($opt_d)) {
-		if ($opt_d ne $dow) {
-			next;
-		}
-	}
 	$h =~ s/^\s+//;
 	$ampm = lc($ampm);
 	my $pacific = $h - 2;
@@ -222,7 +222,7 @@ foreach my $event (sort { $a->{starts}->cmp($b->{starts}) } @events) {
 		$mdt = "${mountain}am";
 	} else {
 		if ($mountain > 12) {
-			$pacific = $pacific - 12;
+			$mountain = $mountain - 12;
 		}
 		$mdt = "${mountain}pm";
 	}
@@ -251,7 +251,9 @@ foreach my $event (sort { $a->{starts}->cmp($b->{starts}) } @events) {
 			print STDERR "warns undef!\n";
 			exit(1);
 		}
+
 		# adjust for future event if its in thee past
+	
 		while ($warns < 0) {
 			$warns += 7*24*3600;
 		}
@@ -269,12 +271,16 @@ foreach my $event (sort { $a->{starts}->cmp($b->{starts}) } @events) {
 		}
 		my $str;
 		if (defined($opt_a)) {
-			my $atime = $event->{starts}->printf("%Y%m%d%H%M.%S");
-			printf STDERR "at -t $atime\n";
+			if ($warns > 24*3600) {
+				next;
+			}
+			$warntime->secs_since_1970_GMT($warns+$nows);
+			my $atime = $warntime->printf("%Y%m%d%H%M.%S");
+			printf STDERR "at -t %s # %s\n", $atime, $event->{summary};
 			my $cmd = sprintf "dwebhook %s \"TC Reminder: %s\" ".
 				"\"%s on %s at %s \@everyone\"",
 				$wh, $event->{summary}, $timestr, $dow, $hour;
-			printf STDERR "> %s\n", $cmd;
+			printf STDERR "  %s\n", $cmd;
 			if (!defined($opt_n)) {
 				open(C,"|at -t $atime");
 				printf C "%s\n", $cmd;
@@ -293,8 +299,12 @@ foreach my $event (sort { $a->{starts}->cmp($b->{starts}) } @events) {
 		$warns += 7*24*3600;
 	}
 	if (defined($opt_a)) {
-		my $atime = $now->printf("%Y%m%d%H%M.%S");
-		printf STDERR "at -t $atime\n";
+		if ($warns > 24*3600) {
+			next;
+		}
+		$warntime->secs_since_1970_GMT($warns+$nows);
+		my $atime = $warntime->printf("%Y%m%d%H%M.%S");
+		printf STDERR "at -t %s # %s\n", $atime, $event->{summary};
 		my $cmd = sprintf "dwebhook %s \"TC Reminder: %s\" ".
 			"\"NOW on %s at %s \@everyone\"",
 			$wh, $event->{summary}, $dow, $hour;
