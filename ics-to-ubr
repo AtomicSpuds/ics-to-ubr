@@ -84,7 +84,7 @@ unless ( $calendar ) {
     exit 1;
 }
 
-my @events;
+our $ev = { };
 
 my $vevent = 0;
 foreach my $entry ( @{$calendar->{entries}} ) {
@@ -215,7 +215,7 @@ foreach my $entry ( @{$calendar->{entries}} ) {
 		$event->{$k} = $info;
 	    }
         }
-	push @events, $event;
+	add_event($event);
     } elsif ( $entry->ical_entry_type eq 'VTIMEZONE') {
 	if (defined($properties->{tzid})) {
 		$gtz = $properties->{tzid};
@@ -231,7 +231,21 @@ my $nows = $now->secs_since_1970_GMT();
 
 our $warntime = Date::Manip::Date->new();
 
-foreach my $event (sort { $a->{starts}->cmp($b->{starts}) } @events) {
+
+foreach my $dow (("Sunday","Monday","Tuesday","Wednesday","Thursday",
+	"Friday","Saturday")) {
+
+    my $e = $ev->{$dow}->{events};
+    if (!defined($e)) {
+	next;
+    }
+
+    print "Processing ($dow)\n";
+    my @events = @{$ev->{$dow}->{events}};
+
+    my $summary = "";
+
+    foreach my $event (sort { $a->{starts}->cmp($b->{starts}) } @events) {
 	my $starts = $event->{starts}->secs_since_1970_GMT();
 
 	my ($pdt,$mdt,$cdt,$edt);
@@ -277,6 +291,10 @@ $pdt US/Pacific
 $mdt US/Mountain
 $cdt US/Central
 $edt US/Eastern";
+	$summary .= "$pdt PDT/$mdt MDT/$cdt CDT/$edt EDT - ";
+	$summary .= $event->{summary};
+	$summary .= "\n";
+	
 	my $warnbase = $starts - $nows;
 
 	foreach my $w (@warntimes) {
@@ -333,7 +351,11 @@ $edt US/Eastern";
 		printf "hey b remind \@everyone in %d seconds to takeover NOW on %s at %s (%s)\n",
 			$warns, $dow, $hour, $event->{summary};
 	}
+    }
+    print "${dow} Summary: '${summary}'\n";
 }
+
+0;
 
 sub fmt_warning {
 	my ($secs, $summary, $timestr, $warns, $dow, $hour) = @_;
@@ -354,4 +376,21 @@ sub fmt_warning {
 	}
 }
 
-0;
+
+sub add_event {
+	my ($event) = @_;
+
+	my ($dow) = $event->{starts}->printf("%A");
+
+	if ($event->{summary} =~ /Summary/) {
+		return;
+	}
+
+	#print "Adding ($dow) ".$event->{summary}."\n";
+
+	if (defined($ev->{$dow}->{events})) {
+		push @{$ev->{$dow}->{events}}, $event;
+	} else {
+		@{$ev->{$dow}->{events}} = ($event);
+	}
+}
