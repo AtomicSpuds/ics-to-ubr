@@ -24,18 +24,28 @@ use Date::Manip::DM6;
 use Date::Manip::Date;
 use Date::Manip::TZ;
 use Getopt::Std;
+use Sys::Syslog qw(:standard :macros);
 use Text::Autoformat;
+
+# syslog bits
+my $fac = "daemon";
+our $prio = LOG_INFO;
+my $proc = "ics-to-ubr";
+
+openlog($proc, "ndelay,pid", $fac);
 
 my $HOME = $ENV{'HOME'};
 
 our $opt_a; # if defined, at output vs ub3r
 our $opt_c; # if defined, override $conf file
 our $opt_d; # if defined, day of week to match
+our $opt_n; # do all but spawn the at jobs
 our $opt_s; # if defined, section of conf file to use
 our $opt_w; # webhook
-our $opt_n; # do all but spawn the at jobs
+our $opt_v; # verbose
 
 $opt_c = "$HOME/.dwebics.conf";
+$opt_v = 0;
 
 getopts('ac:d:ns:w:');
 
@@ -64,9 +74,13 @@ if (defined($opt_s)) {
 	}
 }
 
+syslog($prio, "start");
+
 if (!defined($opt_w) && defined($opt_a)) {
 	die "Need '-w <webhook url>' to send reminders";
 	exit(1);
+} elsif(defined($opt_w)) {
+	syslog($prio, "webhook ${opt_w}");
 }
 
 our $wh = $opt_w;
@@ -163,13 +177,13 @@ foreach my $entry ( @{$calendar->{entries}} ) {
 		my $dmt = $d->tz();
 		my $err = $d->parse($info);
 		if ($err) {
-			printf STDERR "parse of '%s' resulted in error: '%s'\n", $info, $err;
+			syslog($prio, "parse of '%s' resulted in error: '%s'", $info, $err);
 			exit(1);
 		}
 
 		my $dval = [ $d->value() ];
 		if (! $dval) {
-			printf STDERR "value of '%s' resulted in undef\n", $info;
+			syslog($prio, "value of '%s' resulted in undef", $info);
 			exit(1);
 		}
 
@@ -178,7 +192,7 @@ foreach my $entry ( @{$calendar->{entries}} ) {
 		if (! $tmp) {
 			$tmp = $dmt->zone($tz);
 			if (! $tmp) {
-				printf STDERR "tz src issue\n";
+				syslog($prio, "tz src issue");
 				exit(1);
 			}
 		}
@@ -188,7 +202,7 @@ foreach my $entry ( @{$calendar->{entries}} ) {
 		if (! $tmp) {
 			$tmp = $dmt->zone($loctz);
 			if (! $tmp) {
-				printf STDERR "tz dst issue\n";
+				syslog($prio, "tz dst issue");;
 				exit(1);
 			}
 		}
@@ -196,7 +210,7 @@ foreach my $entry ( @{$calendar->{entries}} ) {
 
 		($err, $dval) = $dmt->convert($dval, $from, $to);
 		if ($err) {
-			printf STDERR "dmt->convert() err = '%s'\n", $err;
+			syslog($prio, "dmt->convert() err = '%s'\n", $err);
 			exit(1);
 		}
 		#printf STDERR "dval is a %s, contents:\n", ref($dval);
@@ -249,42 +263,16 @@ foreach my $dow (("Sunday","Monday","Tuesday","Wednesday","Thursday",
 	my $starts = $event->{starts}->secs_since_1970_GMT();
 
 	my ($pdt,$mdt,$cdt,$edt);
-	my ($h,$ampm,$dow) = $event->{starts}->printf("%k","%p","%A");
+	my ($h,$dow) = $event->{starts}->printf("%k","%A");
 	if (defined($opt_d) && $dow ne $opt_d) {
 		next;
 	}
 	$h =~ s/^\s+//;
-	$ampm = lc($ampm);
-	my $pacific = $h - 2;
-	if ($pacific < 12) {
-		$pdt = "${pacific}am";
-	} else {
-		if ($pacific > 12) {
-			$pacific = $pacific - 12;
-		}
-		$pdt = "${pacific}pm";
-	}
-	my $mountain = $h - 1;
-	if ($mountain < 12) {
-		$mdt = "${mountain}am";
-	} else {
-		if ($mountain > 12) {
-			$mountain = $mountain - 12;
-		}
-		$mdt = "${mountain}pm";
-	}
-	my $central = $h;
-	if ($central > 12) {
-		$central = $central - 12;
-	}
-	$cdt = ${central}.$ampm;
-	my $eastern = $h + 1;
-	if ($eastern > 12) {
-		$eastern = $eastern - 12;
-	}
-	$edt = ${eastern}.$ampm;
-
-	my $b4reset = 10 - $central;
+	$pdt = fmt_start($h,-2);
+	$mdt = fmt_start($h,-1);
+	$cdt = fmt_start($h, 0);
+	$edt = fmt_start($h, 1);
+	my $b4reset = 22 - $h;
 	# always afternoon
 	my $hour = "${b4reset}h before reset
 $pdt US/Pacific
@@ -301,7 +289,7 @@ $edt US/Eastern";
 		my $m = $w;
 		my $warns = $warnbase;
 		if (!defined($event->{starts})) {
-			printf STDERR "Event '%s' starts is undef\n", $event->{summary};
+			syslog($prio, "Event '%s' starts is undef\n", $event->{summary});
 			exit(1);
 		}
 		$warns -= ($m * 60);
@@ -352,8 +340,11 @@ $edt US/Eastern";
 			$warns, $dow, $hour, $event->{summary};
 	}
     }
-    print "${dow} Summary: '${summary}'\n";
+    print "${summary}\n";
 }
+
+syslog($prio, "end"); 
+closelog();
 
 0;
 
@@ -362,13 +353,17 @@ sub fmt_warning {
 
 	$warntime->secs_since_1970_GMT($secs);
 	my $atime = $warntime->printf("%Y%m%d%H%M.%S");
-	printf STDERR "at -t %s # %s in %ds (%s warning)\n",
-		$atime, $summary, $warns, $timestr;
+	if ($opt_v>0) {
+	syslog($prio, "at -t %s # %s in %ds (%s warning)",
+		$atime, $summary, $warns, $timestr);
+	}
 	my $cmd = sprintf "dwebhook %s \"TC Reminder: %s\" ".
 		"\"%s on %s %s
 \@everyone\"",
 		$wh, $summary, $timestr, $dow, $hour;
-	printf STDERR "  %s\n", $cmd;
+	if ($opt_v>0) {
+	syslog($prio, "  %s", $cmd);
+	}
 	if (!defined($opt_n)) {
 		open(C,"|at -t $atime");
 		printf C "%s\n", $cmd;
@@ -393,4 +388,24 @@ sub add_event {
 	} else {
 		@{$ev->{$dow}->{events}} = ($event);
 	}
+}
+
+sub fmt_start {
+	my ($h,$off) = @_;
+
+	my $ret;
+
+	my $start = $h + $off;
+	if ($start < 12) {
+		$ret = "${start}am";
+	} else {
+		if ($start > 12) {
+			$start = $start - 12;
+		}
+		$ret = "${start}pm";
+	}
+	if ($start < 10) {
+		$ret = " ".$ret;
+	}
+	return $ret;
 }
