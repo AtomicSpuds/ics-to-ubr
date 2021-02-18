@@ -47,7 +47,7 @@ our $opt_v; # verbose
 $opt_c = "$HOME/.dwebics.conf";
 $opt_v = 0;
 
-getopts('ac:d:ns:w:');
+getopts('ac:d:ns:vw:');
 
 if (!-f $opt_c) {
 	die "Need a config file. ${opt_c} not found";
@@ -75,6 +75,12 @@ if (defined($opt_s)) {
 }
 
 syslog($prio, "start");
+if($opt_v>0) {
+	syslog($prio, "verbose = %d", $opt_v);
+}
+if (defined($opt_n)) {
+	syslog($prio, "opt_n = %s", $opt_n);
+}
 
 if (!defined($opt_w) && defined($opt_a)) {
 	die "Need '-w <webhook url>' to send reminders";
@@ -93,8 +99,8 @@ $calendar = Data::ICal->new(data => $body, vcal10 => 1) unless $calendar;
 
 # If parsing failed, give up :-(
 unless ( $calendar ) {
-    print "Unable to parse vcalendar: ", $calendar->error_message, "\n";
-    print $body;
+    syslog($prio,"Unable to parse: ", $calendar->error_message);
+    syslog(LOG_DEBUG, $body);
     exit 1;
 }
 
@@ -242,6 +248,7 @@ foreach my $entry ( @{$calendar->{entries}} ) {
 my $now = Date::Manip::Date->new();
 $now->parse("now");
 my $nows = $now->secs_since_1970_GMT();
+my $nowdow = $now->printf("%A");
 
 our $warntime = Date::Manip::Date->new();
 
@@ -254,27 +261,32 @@ foreach my $dow (("Sunday","Monday","Tuesday","Wednesday","Thursday",
 	next;
     }
 
+    if (defined($opt_d) && $dow ne $opt_d) {
+	next;
+    }
+
     print "Processing ($dow)\n";
     my @events = @{$ev->{$dow}->{events}};
 
     my $summary = "";
 
+    my $showdow;
+    if ($nowdow eq $dow) {
+	$showdow = "Today";
+    }
+
     foreach my $event (sort { $a->{starts}->cmp($b->{starts}) } @events) {
 	my $starts = $event->{starts}->secs_since_1970_GMT();
 
 	my ($pdt,$mdt,$cdt,$edt);
-	my ($h,$dow) = $event->{starts}->printf("%k","%A");
-	if (defined($opt_d) && $dow ne $opt_d) {
-		next;
-	}
+	my $h = $event->{starts}->printf("%k");
 	$h =~ s/^\s+//;
 	$pdt = fmt_start($h,-2);
 	$mdt = fmt_start($h,-1);
 	$cdt = fmt_start($h, 0);
 	$edt = fmt_start($h, 1);
-	my $b4reset = 22 - $h;
 	# always afternoon
-	my $hour = "${b4reset}h before reset
+	my $hour = "
 $pdt US/Pacific
 $mdt US/Mountain
 $cdt US/Central
@@ -319,7 +331,7 @@ $edt US/Eastern";
 		if (defined($opt_a)) {
 			my $sum = $warns + $nows;
 			fmt_warning($sum, $event->{summary},
-				$timestr, $warns, $dow, $hour);
+				$timestr, $warns, $showdow, $hour);
 		} else {
 			$str = sprintf "hey b remind \@everyone in %d seconds to takeover in %s on %s at %s (%s)\n",
 			$warns, $timestr, $dow, $hour, $event->{summary};
@@ -334,10 +346,10 @@ $edt US/Eastern";
 	if (defined($opt_a)) {
 		my $sum = $warns + $nows;
 		fmt_warning($sum, $event->{summary},
-			"NOW", $warns, $dow, $hour);
+			"NOW", $warns, $showdow, $hour);
 	} else {
 		printf "hey b remind \@everyone in %d seconds to takeover NOW on %s at %s (%s)\n",
-			$warns, $dow, $hour, $event->{summary};
+			$warns, $showdow, $hour, $event->{summary};
 	}
     }
     print "${summary}\n";
@@ -351,6 +363,15 @@ closelog();
 sub fmt_warning {
 	my ($secs, $summary, $timestr, $warns, $dow, $hour) = @_;
 
+	my $onstr = "on ";
+	if ($dow eq "Today") {
+		$onstr = "";
+	}
+	if ($timestr eq "NOW") {
+		$onstr = "";
+		$dow = "";
+	}
+
 	$warntime->secs_since_1970_GMT($secs);
 	my $atime = $warntime->printf("%Y%m%d%H%M.%S");
 	if ($opt_v>0) {
@@ -358,9 +379,9 @@ sub fmt_warning {
 		$atime, $summary, $warns, $timestr);
 	}
 	my $cmd = sprintf "dwebhook %s \"TC Reminder: %s\" ".
-		"\"%s on %s %s
+		"\"%s %s%s %s
 \@everyone\"",
-		$wh, $summary, $timestr, $dow, $hour;
+		$wh, $summary, $timestr, $onstr, $dow, $hour;
 	if ($opt_v>0) {
 	syslog($prio, "  %s", $cmd);
 	}
