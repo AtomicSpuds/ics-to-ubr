@@ -135,7 +135,7 @@ foreach my $entry ( @{$calendar->{entries}} ) {
     	my $event = { };
 	$event->{count} = $vevent++;
 	my $prevseen = 0;
-        foreach my $key ( qw(summary dtstart dtend) ) {
+        foreach my $key ( qw(summary dtstart dtend description) ) {
 	    $prevseen = 0;
             next unless defined $properties->{$key};
 	    my $info = $properties->{$key};
@@ -273,6 +273,8 @@ foreach my $dow (("Sunday","Monday","Tuesday","Wednesday","Thursday",
     my $showdow;
     if ($nowdow eq $dow) {
 	$showdow = "Today";
+    } else {
+	$showdow = $dow;
     }
 
     foreach my $event (sort { $a->{starts}->cmp($b->{starts}) } @events) {
@@ -293,7 +295,7 @@ $cdt US/Central
 $edt US/Eastern";
 	$summary .= "$pdt PDT/$mdt MDT/$cdt CDT/$edt EDT - ";
 	$summary .= $event->{summary};
-	$summary .= "\n";
+	$summary .= "\n\n";
 	
 	my $warnbase = $starts - $nows;
 
@@ -352,7 +354,9 @@ $edt US/Eastern";
 			$warns, $showdow, $hour, $event->{summary};
 	}
     }
-    print "${summary}\n";
+    fmt_warning( UnixDate( DateCalc( $dow, "+10h 50minutes" ), "%s" ),
+	"Daily Summary", "", 0, "Today", "```\n $summary\n```");
+    print "$summary\n";
 }
 
 syslog($prio, "end"); 
@@ -378,7 +382,7 @@ sub fmt_warning {
 	syslog($prio, "at -t %s # %s in %ds (%s warning)",
 		$atime, $summary, $warns, $timestr);
 	}
-	my $cmd = sprintf "dwebhook %s \"TC Reminder: %s\" ".
+	my $cmd = sprintf "dwebhook %s \"TC: %s\" ".
 		"\"%s %s%s %s
 \@everyone\"",
 		$wh, $summary, $timestr, $onstr, $dow, $hour;
@@ -399,6 +403,12 @@ sub add_event {
 	my ($dow) = $event->{starts}->printf("%A");
 
 	if ($event->{summary} =~ /Summary/) {
+		print "Skiping:\n---\n";
+		print $event->{summary};
+		print "\n-\n";
+		#$Data::Dumper::Maxdepth = 3;
+		#print Dumper($event);
+		print "---\n";
 		return;
 	}
 
