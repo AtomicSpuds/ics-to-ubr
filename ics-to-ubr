@@ -109,6 +109,11 @@ our $ev = { };
 my $vevent = 0;
 foreach my $entry ( @{$calendar->{entries}} ) {
     my $properties;
+    if ($opt_v > 2) {
+	print "Calendar entry:\n---- cal entry start----\n";
+	print Dumper($entry);
+	print "---- cal entry end  ----\n";
+    }
 
     foreach my $property ( keys %{$entry->properties} ) {
         next unless defined $entry->property($property);
@@ -135,7 +140,7 @@ foreach my $entry ( @{$calendar->{entries}} ) {
     	my $event = { };
 	$event->{count} = $vevent++;
 	my $prevseen = 0;
-        foreach my $key ( qw(summary dtstart dtend description) ) {
+        foreach my $key ( qw(summary dtstart dtend description location sequence last-modified uid status rrule created class transp) ) {
 	    $prevseen = 0;
             next unless defined $properties->{$key};
 	    my $info = $properties->{$key};
@@ -383,16 +388,17 @@ sub fmt_warning {
 		$atime, $summary, $warns, $timestr);
 	}
 	my $cmd = sprintf "dwebhook %s \"TC: %s\" ".
-		"\"%s %s%s %s
-\@everyone\"",
+		"'%s %s%s %s
+\@everyone'",
 		$wh, $summary, $timestr, $onstr, $dow, $hour;
-	if ($opt_v>0) {
-	syslog($prio, "  %s", $cmd);
-	}
 	if (!defined($opt_n)) {
 		open(C,"|at -t $atime");
 		printf C "%s\n", $cmd;
 		close(C);
+	}
+	if ($opt_v>0) {
+		$cmd =~ s/\n/\{nl}/g;
+		syslog($prio, "  %s", $cmd);
 	}
 }
 
