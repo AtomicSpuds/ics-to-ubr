@@ -57,6 +57,8 @@ our $config = Config::Tiny->read( $opt_c );
 
 my @warntimes = (2880,1440,120,60,45,30,10);
 
+my $sumtime = "+6h"; # beginning of today plus what = when to send summary
+
 if (defined($opt_s)) {
 	if (defined($config->{$opt_s})) {
 		my $v = $config->{$opt_s}->{webhook};
@@ -70,6 +72,10 @@ if (defined($opt_s)) {
 			foreach my $w (split(/,/,$v)) {
 				push @warntimes, $w;
 			}
+		}
+		$v = $config->{$opt_s}->{summarytime};
+		if (defined($v)) {
+			$sumtime = $v;
 		}
 	}
 }
@@ -257,7 +263,6 @@ my $nowdow = $now->printf("%A");
 
 our $warntime = Date::Manip::Date->new();
 
-
 foreach my $dow (("Sunday","Monday","Tuesday","Wednesday","Thursday",
 	"Friday","Saturday")) {
 
@@ -361,7 +366,7 @@ $edt US/Eastern";
 			$warns, $showdow, $hour, $event->{summary};
 	}
     }
-    fmt_warning( UnixDate( DateCalc( $dow, "+10h 30minutes" ), "%s" ),
+    fmt_warning( UnixDate( DateCalc( $dow, $sumtime ), "%s" ),
 	"Daily Summary", "", 0, "Today", "```\n $summary\n```");
     print "$summary\n";
 }
