@@ -282,7 +282,9 @@ foreach my $dow (("Sunday","Monday","Tuesday","Wednesday","Thursday",
 	$showdow = $dow;
     }
 
-    foreach my $event (sort { $a->{starts}->cmp($b->{starts}) } @events) {
+    foreach my $event (sort {
+		$a->{starts}->printf("%k") >= $b->{starts}->printf("%k")
+	} @events) {
 	my $starts = $event->{starts}->secs_since_1970_GMT();
 
 	my ($pdt,$mdt,$cdt,$edt);
@@ -359,7 +361,7 @@ $edt US/Eastern";
 			$warns, $showdow, $hour, $event->{summary};
 	}
     }
-    fmt_warning( UnixDate( DateCalc( $dow, "+10h 50minutes" ), "%s" ),
+    fmt_warning( UnixDate( DateCalc( $dow, "+10h 30minutes" ), "%s" ),
 	"Daily Summary", "", 0, "Today", "```\n $summary\n```");
     print "$summary\n";
 }
